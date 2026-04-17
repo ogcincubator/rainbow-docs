@@ -55,9 +55,10 @@ curl -X PUT \
 Set `FUSEKI_PASSWORD` to the value you configured in `docker-compose.yml`, or
 replace `${FUSEKI_PASSWORD}` with the password directly.
 
-Note that this uses `PUT`, which **replaces** the entire named graph with the
-uploaded content. If you want to add triples to an existing graph instead of
-replacing it, use `POST`.
+This uses the [SPARQL Graph Store Protocol](https://www.w3.org/TR/sparql11-http-rdf-update/)
+`PUT` method, which **replaces** the entire named graph with the uploaded
+content. If you want to add triples to an existing graph instead of replacing
+it, use `POST`.
 
 ### Option C: Python (requests + SPARQL Graph Store Protocol)
 
@@ -138,6 +139,120 @@ curl -L \
 
 Prez will return the resource serialized as Turtle RDF.
 
+## Registering in the Prez catalog
+
+Browsing a resource by its URI works as soon as the data is in the triplestore.
+However, Prez also provides a **data catalog** view — a browsable hierarchy of
+all published resources. For a resource to appear there, it must be declared as
+an entry in a `dcat:Catalog` → `skos:ConceptScheme` → `skos:Concept` hierarchy
+that Prez recognizes.
+
+We will use the [**Prez default hierarchy OGC Block**](https://ogcincubator.github.io/bblocks-prez/bblock/ogc.prez.hierarchy.default)
+(`ogc.prez.hierarchy.default`) to define this scaffolding. Like the provenance
+block, it ships with a schema and a JSON-LD context, so you can use it straight
+away or inspect its definition to understand exactly what RDF it produces.
+
+### Creating the catalog document
+
+Create a file called `cdi-catalog.json`. Each resource from the provenance chain
+becomes a `skos:Concept` entry, a `skos:ConceptScheme` groups them, and a
+`dcat:Catalog` wraps everything.
+
+```json
+{
+  "id": "catalogs/rainbow",
+  "name": "Rainbow Catalog",
+  "items": [
+    {
+      "id": "schemes/drought-indicators",
+      "name": "Drought Indicators",
+      "concepts": [
+        {
+          "id": "indicators/cdi",
+          "name": "Composite Drought Indicator"
+        },
+        {
+          "id": "act/cdi-computation",
+          "name": "CDI Computation"
+        },
+        {
+          "id": "obs/soil-moisture-anomaly",
+          "name": "Soil Moisture Anomaly"
+        },
+        {
+          "id": "obs/rainfall-anomaly",
+          "name": "Rainfall Anomaly"
+        },
+        {
+          "id": "obs/vegetation-condition-anomaly",
+          "name": "Vegetation Condition Anomaly"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `id` values for the concepts are the same ones used in `cdi-indicator.json`.
+After uplift, both documents produce triples for the same URIs, so the concept
+entries point at the resources already in the triplestore rather than creating
+new, duplicate ones.
+
+### Uplifting and uploading
+
+The process follows the same validate → uplift → upload pattern, with two
+differences: the Prez Blocks register is used instead of the provenance one,
+and the data goes into a **dedicated catalog graph**. Here we also skip writing
+an intermediate Turtle file and pass the serialized RDF directly to the upload
+request. Keeping the catalog in a separate graph is important because `PUT`
+replaces the entire named graph on each upload; if the catalog and the
+provenance data shared a graph, updating one would overwrite the other.
+
+```python
+from ogc.bblocks.register import load_register
+from ogc.bblocks.validate import validate_json
+from ogc.bblocks.semantic_uplift import uplift_json
+import json, requests, os
+
+# Load the Prez Hierarchy block
+register = load_register(
+    "https://ogcincubator.github.io/bblocks-prez/build/register.json"
+)
+bblock = register.get_item_full("ogc.prez.hierarchy.default")
+
+with open("cdi-catalog.json") as f:
+    catalog = json.load(f)
+
+result = validate_json(bblock, catalog)
+result.raise_for_invalid()
+print("Validation passed!")
+
+rdf_graph = uplift_json(bblock, catalog, base_uri='https://example.com/rainbow/')
+data = rdf_graph.serialize()
+print("Uplift complete")
+
+FUSEKI_URL = "http://localhost:3030"
+DATASET = "fuseki"
+GRAPH_URI = "https://example.com/rainbow/graphs/catalog"
+FUSEKI_PASSWORD = os.environ.get("FUSEKI_PASSWORD", "changeme")
+
+response = requests.put(
+    f"{FUSEKI_URL}/{DATASET}/data",
+    params={"graph": GRAPH_URI},
+    headers={"Content-Type": "text/turtle"},
+    data=data,
+    auth=("admin", FUSEKI_PASSWORD),
+)
+response.raise_for_status()
+print(f"Catalog uploaded (HTTP {response.status_code})")
+```
+
+Once uploaded, the Composite Drought Indicator and its associated resources will
+appear under **Rainbow Catalog** in the Prez catalog view at
+`http://localhost:8080`.
+
+<!-- TODO: add screenshot of the Prez catalog view -->
+
 ## Summary
 
 You have successfully:
@@ -146,9 +261,11 @@ You have successfully:
 2. Described the Composite Drought Indicator as a provenance chain
 3. Validated and uplifted the document with `bblocks-client-python`
 4. Uploaded the data to Fuseki and browsed it as linked data
+5. Defined the Prez catalog scaffolding and made the resources discoverable in
+   the catalog view
 
 The indicator is now published and accessible as a dereferenceable linked data
-resource.
+resource, and discoverable through the Prez data catalog.
 
 ## Moving to real-world URIs
 

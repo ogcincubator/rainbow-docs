@@ -165,10 +165,10 @@ Your terminal prompt will change to show `(.venv)`, indicating the environment
 is active. All `pip install` commands from this point on will install into the
 virtual environment only.
 
-Install the library with RDF support:
+Install the library with RDF support (as well as `requests` for HTTP queries):
 
 ```bash
-pip install "bblocks_client[all]"
+pip install "bblocks_client[all] requests"
 ```
 
 Then run the following script:
