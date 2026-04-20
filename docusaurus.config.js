@@ -85,7 +85,7 @@ const config = {
           {
             href: 'https://defs.opengis.net/',
             position: 'right',
-            label: 'Definition Service',
+            label: 'Definitions Service',
           },
         ],
       },
